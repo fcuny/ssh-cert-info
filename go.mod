@@ -1,7 +1,7 @@
 module fcuny.net/ssh-cert-info
 
-go 1.23.0
+go 1.25.0
 
-require golang.org/x/crypto v0.41.0
+require golang.org/x/crypto v0.50.0
 
-require golang.org/x/sys v0.35.0 // indirect
+require golang.org/x/sys v0.43.0 // indirect
