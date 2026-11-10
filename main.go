@@ -1,9 +1,12 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -11,6 +14,15 @@ import (
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "Print the version and the Go toolchain it was built with, then exit")
+	flag.Parse()
+
+	if *showVersion {
+		info, _ := debug.ReadBuildInfo() // nil when the binary has no build info
+		fmt.Println(versionString(info))
+		return
+	}
+
 	sshDir, err := getSSHDirectory()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting SSH directory: %v\n", err)
@@ -36,6 +48,47 @@ func main() {
 		checkCertificate(certPath)
 		fmt.Println()
 	}
+}
+
+// versionString describes the build from the information the Go toolchain
+// embeds in every binary, so it needs no -ldflags. The module version is the
+// tag for `go install ...@vX.Y.Z`, or a pseudo-version with the commit (and
+// "+dirty" for uncommitted changes) for builds from a checkout. The Go version
+// matters too: it decides which standard library fixes the binary has.
+func versionString(info *debug.BuildInfo) string {
+	if info == nil {
+		return fmt.Sprintf("ssh-cert-info unknown built with %s", runtime.Version())
+	}
+
+	version := info.Main.Version
+	if version == "" || version == "(devel)" {
+		version = "(devel)"
+		var revision string
+		var modified bool
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				revision = s.Value
+			case "vcs.modified":
+				modified = s.Value == "true"
+			}
+		}
+		if revision != "" {
+			if len(revision) > 12 {
+				revision = revision[:12]
+			}
+			version = revision
+			if modified {
+				version += "+dirty"
+			}
+		}
+	}
+
+	goVersion := info.GoVersion
+	if goVersion == "" {
+		goVersion = runtime.Version()
+	}
+	return fmt.Sprintf("ssh-cert-info %s built with %s", version, goVersion)
 }
 
 func getSSHDirectory() (string, error) {
