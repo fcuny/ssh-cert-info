@@ -157,7 +157,7 @@ func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
 
 	fmt.Fprintf(w, "  Public key: %s %s\n", cert.Key.Type(), ssh.FingerprintSHA256(cert.Key))
 
-	fmt.Fprintf(w, "  Signing CA: %s\n", cert.SignatureKey.Type())
+	fmt.Fprintf(w, "  Signing CA: %s %s\n", cert.SignatureKey.Type(), ssh.FingerprintSHA256(cert.SignatureKey))
 
 	fmt.Fprintf(w, "  Key ID: %s\n", cert.KeyId)
 
