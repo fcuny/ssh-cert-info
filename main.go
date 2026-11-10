@@ -146,14 +146,14 @@ func checkCertificate(w io.Writer, certPath string) {
 }
 
 func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
-	certType := "Unknown"
+	kind := "unknown"
 	switch cert.CertType {
 	case ssh.UserCert:
-		certType = "ssh-ed25519-cert-v01@openssh.com user certificate"
+		kind = "user"
 	case ssh.HostCert:
-		certType = "ssh-ed25519-cert-v01@openssh.com host certificate"
+		kind = "host"
 	}
-	fmt.Fprintf(w, "  Type: %s\n", certType)
+	fmt.Fprintf(w, "  Type: %s %s certificate\n", cert.Type(), kind)
 
 	fmt.Fprintf(w, "  Public key: %s %s\n", cert.Key.Type(), cert.KeyId)
 
