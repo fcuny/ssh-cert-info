@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -132,7 +134,8 @@ func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
 
 	if len(cert.CriticalOptions) > 0 {
 		fmt.Fprintln(w, "  Critical Options:")
-		for key, value := range cert.CriticalOptions {
+		for _, key := range slices.Sorted(maps.Keys(cert.CriticalOptions)) {
+			value := cert.CriticalOptions[key]
 			if value == "" {
 				fmt.Fprintf(w, "    %s\n", key)
 			} else {
@@ -143,7 +146,8 @@ func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
 
 	if len(cert.Extensions) > 0 {
 		fmt.Fprintln(w, "  Extensions:")
-		for key, value := range cert.Extensions {
+		for _, key := range slices.Sorted(maps.Keys(cert.Extensions)) {
+			value := cert.Extensions[key]
 			if value == "" {
 				fmt.Fprintf(w, "    %s\n", key)
 			} else {

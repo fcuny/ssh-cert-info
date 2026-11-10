@@ -119,6 +119,43 @@ func TestFindCertificateFilesMissingDirectory(t *testing.T) {
 	}
 }
 
+func TestOptionsAreSorted(t *testing.T) {
+	cert := newCertificate(t, func(c *ssh.Certificate) {
+		c.CriticalOptions = map[string]string{
+			"source-address":  "10.0.0.0/8",
+			"force-command":   "/usr/bin/true",
+			"verify-required": "",
+		}
+		c.Extensions = map[string]string{
+			"permit-X11-forwarding":   "",
+			"permit-agent-forwarding": "",
+			"permit-port-forwarding":  "",
+			"permit-pty":              "",
+			"permit-user-rc":          "",
+		}
+	})
+	want := "  Critical Options:\n" +
+		"    force-command /usr/bin/true\n" +
+		"    source-address 10.0.0.0/8\n" +
+		"    verify-required\n" +
+		"  Extensions:\n" +
+		"    permit-X11-forwarding\n" +
+		"    permit-agent-forwarding\n" +
+		"    permit-port-forwarding\n" +
+		"    permit-pty\n" +
+		"    permit-user-rc\n"
+
+	// Map iteration order is random, so render several times to catch an
+	// unsorted loop that matches by chance.
+	for range 10 {
+		var out bytes.Buffer
+		displayCertificateInfo(&out, cert)
+		if got := out.String(); !strings.HasSuffix(got, want) {
+			t.Fatalf("output does not end with the sorted options:\n%s", got)
+		}
+	}
+}
+
 func TestCheckCertificate(t *testing.T) {
 	valid := newCertificate(t, nil)
 	host := newCertificate(t, func(c *ssh.Certificate) { c.CertType = ssh.HostCert })
