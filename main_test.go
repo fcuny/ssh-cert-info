@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"os"
 	"os/exec"
@@ -205,6 +208,50 @@ func TestCheckCertificate(t *testing.T) {
 				if strings.Contains(got, notWant) {
 					t.Errorf("output contains %q:\n%s", notWant, got)
 				}
+			}
+		})
+	}
+}
+
+func TestCertificateType(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating RSA key: %v", err)
+	}
+	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating ECDSA key: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		key      any
+		certType uint32
+		want     string
+	}{
+		{name: "ed25519 user", key: nil, certType: ssh.UserCert, want: "ssh-ed25519-cert-v01@openssh.com user certificate"},
+		{name: "RSA user", key: &rsaKey.PublicKey, certType: ssh.UserCert, want: "ssh-rsa-cert-v01@openssh.com user certificate"},
+		{name: "ECDSA host", key: &ecdsaKey.PublicKey, certType: ssh.HostCert, want: "ecdsa-sha2-nistp256-cert-v01@openssh.com host certificate"},
+		{name: "unknown kind", key: nil, certType: 3, want: "ssh-ed25519-cert-v01@openssh.com unknown certificate"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cert := newCertificate(t, func(c *ssh.Certificate) {
+				c.CertType = tt.certType
+				if tt.key != nil {
+					pub, err := ssh.NewPublicKey(tt.key)
+					if err != nil {
+						t.Fatalf("converting public key: %v", err)
+					}
+					c.Key = pub
+				}
+			})
+
+			var out bytes.Buffer
+			displayCertificateInfo(&out, cert)
+			if want := "  Type: " + tt.want + "\n"; !strings.Contains(out.String(), want) {
+				t.Errorf("output does not contain %q:\n%s", want, out.String())
 			}
 		})
 	}
