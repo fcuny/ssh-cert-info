@@ -182,7 +182,7 @@ func TestCheckCertificate(t *testing.T) {
 			want: []string{
 				"  Type: ssh-ed25519-cert-v01@openssh.com user certificate\n",
 				"  Public key: ssh-ed25519 " + ssh.FingerprintSHA256(valid.Key) + "\n",
-				"  Signing CA: ssh-ed25519\n",
+				"  Signing CA: ssh-ed25519 " + ssh.FingerprintSHA256(valid.SignatureKey) + "\n",
 				"  Key ID: alice@example.com\n",
 				"  Serial: 42\n",
 				"  Valid from: " + formatCertTime(valid.ValidAfter) + "\n",
