@@ -117,11 +117,10 @@ func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
 
 	if cert.ValidBefore == ssh.CertTimeInfinity {
 		fmt.Fprintf(w, "  Valid to: forever\n")
-		fmt.Fprintln(w, "  ✓ Certificate is currently valid")
 	} else {
 		fmt.Fprintf(w, "  Valid to: %s\n", validTo.Format("2006-01-02T15:04:05"))
-		checkCertificateExpiration(w, validTo)
 	}
+	checkCertificateValidity(w, cert, time.Now())
 
 	if len(cert.ValidPrincipals) > 0 {
 		fmt.Fprintln(w, "  Principals:")
@@ -153,11 +152,18 @@ func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
 	}
 }
 
-func checkCertificateExpiration(w io.Writer, validTo time.Time) {
-	now := time.Now()
-	if validTo.Before(now) {
+// checkCertificateValidity applies the same rule as ssh.CertChecker: a
+// certificate is valid from ValidAfter up to, but not including, ValidBefore.
+// It compares Unix seconds as uint64, so ValidBefore values past the int64
+// range don't wrap into the past.
+func checkCertificateValidity(w io.Writer, cert *ssh.Certificate, now time.Time) {
+	unixNow := uint64(now.Unix())
+	switch {
+	case unixNow < cert.ValidAfter:
+		fmt.Fprintln(w, "  ⚠️  WARNING: Certificate is not yet valid!")
+	case cert.ValidBefore != ssh.CertTimeInfinity && unixNow >= cert.ValidBefore:
 		fmt.Fprintln(w, "  ⚠️  WARNING: Certificate has EXPIRED!")
-	} else {
+	default:
 		fmt.Fprintln(w, "  ✓ Certificate is currently valid")
 	}
 }
