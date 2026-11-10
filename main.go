@@ -1,11 +1,14 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
@@ -14,6 +17,15 @@ import (
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "Print the version and the Go toolchain it was built with, then exit")
+	flag.Parse()
+
+	if *showVersion {
+		info, _ := debug.ReadBuildInfo() // nil when the binary has no build info
+		fmt.Println(versionString(info))
+		return
+	}
+
 	sshDir, err := getSSHDirectory()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting SSH directory: %v\n", err)
@@ -39,6 +51,47 @@ func main() {
 		checkCertificate(os.Stdout, certPath)
 		fmt.Println()
 	}
+}
+
+// versionString describes the build from the information the Go toolchain
+// embeds in every binary, so it needs no -ldflags. The module version is the
+// tag for `go install ...@vX.Y.Z`, or a pseudo-version with the commit (and
+// "+dirty" for uncommitted changes) for builds from a checkout. The Go version
+// matters too: it decides which standard library fixes the binary has.
+func versionString(info *debug.BuildInfo) string {
+	if info == nil {
+		return fmt.Sprintf("ssh-cert-info unknown built with %s", runtime.Version())
+	}
+
+	version := info.Main.Version
+	if version == "" || version == "(devel)" {
+		version = "(devel)"
+		var revision string
+		var modified bool
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				revision = s.Value
+			case "vcs.modified":
+				modified = s.Value == "true"
+			}
+		}
+		if revision != "" {
+			if len(revision) > 12 {
+				revision = revision[:12]
+			}
+			version = revision
+			if modified {
+				version += "+dirty"
+			}
+		}
+	}
+
+	goVersion := info.GoVersion
+	if goVersion == "" {
+		goVersion = runtime.Version()
+	}
+	return fmt.Sprintf("ssh-cert-info %s built with %s", version, goVersion)
 }
 
 func getSSHDirectory() (string, error) {
@@ -95,16 +148,16 @@ func checkCertificate(w io.Writer, certPath string) {
 }
 
 func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
-	certType := "Unknown"
+	kind := "unknown"
 	switch cert.CertType {
 	case ssh.UserCert:
-		certType = "ssh-ed25519-cert-v01@openssh.com user certificate"
+		kind = "user"
 	case ssh.HostCert:
-		certType = "ssh-ed25519-cert-v01@openssh.com host certificate"
+		kind = "host"
 	}
-	fmt.Fprintf(w, "  Type: %s\n", certType)
+	fmt.Fprintf(w, "  Type: %s %s certificate\n", cert.Type(), kind)
 
-	fmt.Fprintf(w, "  Public key: %s %s\n", cert.Key.Type(), cert.KeyId)
+	fmt.Fprintf(w, "  Public key: %s %s\n", cert.Key.Type(), ssh.FingerprintSHA256(cert.Key))
 
 	fmt.Fprintf(w, "  Signing CA: %s\n", cert.SignatureKey.Type())
 
@@ -119,11 +172,10 @@ func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
 
 	if cert.ValidBefore == ssh.CertTimeInfinity {
 		fmt.Fprintf(w, "  Valid to: forever\n")
-		fmt.Fprintln(w, "  ✓ Certificate is currently valid")
 	} else {
 		fmt.Fprintf(w, "  Valid to: %s\n", validTo.Format("2006-01-02T15:04:05"))
-		checkCertificateExpiration(w, validTo)
 	}
+	checkCertificateValidity(w, cert, time.Now())
 
 	if len(cert.ValidPrincipals) > 0 {
 		fmt.Fprintln(w, "  Principals:")
@@ -157,11 +209,18 @@ func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
 	}
 }
 
-func checkCertificateExpiration(w io.Writer, validTo time.Time) {
-	now := time.Now()
-	if validTo.Before(now) {
+// checkCertificateValidity applies the same rule as ssh.CertChecker: a
+// certificate is valid from ValidAfter up to, but not including, ValidBefore.
+// It compares Unix seconds as uint64, so ValidBefore values past the int64
+// range don't wrap into the past.
+func checkCertificateValidity(w io.Writer, cert *ssh.Certificate, now time.Time) {
+	unixNow := uint64(now.Unix())
+	switch {
+	case unixNow < cert.ValidAfter:
+		fmt.Fprintln(w, "  ⚠️  WARNING: Certificate is not yet valid!")
+	case cert.ValidBefore != ssh.CertTimeInfinity && unixNow >= cert.ValidBefore:
 		fmt.Fprintln(w, "  ⚠️  WARNING: Certificate has EXPIRED!")
-	} else {
+	default:
 		fmt.Fprintln(w, "  ✓ Certificate is currently valid")
 	}
 }

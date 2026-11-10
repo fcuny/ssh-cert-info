@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"os"
 	"os/exec"
@@ -163,6 +166,9 @@ func TestCheckCertificate(t *testing.T) {
 		c.ValidBefore = uint64(time.Now().Add(-time.Hour).Unix())
 	})
 	forever := newCertificate(t, func(c *ssh.Certificate) { c.ValidBefore = ssh.CertTimeInfinity })
+	notYetValid := newCertificate(t, func(c *ssh.Certificate) {
+		c.ValidAfter = uint64(time.Now().Add(time.Hour).Unix())
+	})
 
 	tests := []struct {
 		name    string
@@ -175,6 +181,7 @@ func TestCheckCertificate(t *testing.T) {
 			data: ssh.MarshalAuthorizedKey(valid),
 			want: []string{
 				"  Type: ssh-ed25519-cert-v01@openssh.com user certificate\n",
+				"  Public key: ssh-ed25519 " + ssh.FingerprintSHA256(valid.Key) + "\n",
 				"  Signing CA: ssh-ed25519\n",
 				"  Key ID: alice@example.com\n",
 				"  Serial: 42\n",
@@ -199,6 +206,12 @@ func TestCheckCertificate(t *testing.T) {
 			data:    ssh.MarshalAuthorizedKey(expired),
 			want:    []string{"  ⚠️  WARNING: Certificate has EXPIRED!\n"},
 			notWant: []string{"currently valid"},
+		},
+		{
+			name:    "not yet valid certificate",
+			data:    ssh.MarshalAuthorizedKey(notYetValid),
+			want:    []string{"  ⚠️  WARNING: Certificate is not yet valid!\n"},
+			notWant: []string{"currently valid", "EXPIRED"},
 		},
 		{
 			name: "certificate without expiry",
@@ -247,6 +260,50 @@ func TestCheckCertificate(t *testing.T) {
 	}
 }
 
+func TestCertificateType(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating RSA key: %v", err)
+	}
+	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating ECDSA key: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		key      any
+		certType uint32
+		want     string
+	}{
+		{name: "ed25519 user", key: nil, certType: ssh.UserCert, want: "ssh-ed25519-cert-v01@openssh.com user certificate"},
+		{name: "RSA user", key: &rsaKey.PublicKey, certType: ssh.UserCert, want: "ssh-rsa-cert-v01@openssh.com user certificate"},
+		{name: "ECDSA host", key: &ecdsaKey.PublicKey, certType: ssh.HostCert, want: "ecdsa-sha2-nistp256-cert-v01@openssh.com host certificate"},
+		{name: "unknown kind", key: nil, certType: 3, want: "ssh-ed25519-cert-v01@openssh.com unknown certificate"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cert := newCertificate(t, func(c *ssh.Certificate) {
+				c.CertType = tt.certType
+				if tt.key != nil {
+					pub, err := ssh.NewPublicKey(tt.key)
+					if err != nil {
+						t.Fatalf("converting public key: %v", err)
+					}
+					c.Key = pub
+				}
+			})
+
+			var out bytes.Buffer
+			displayCertificateInfo(&out, cert)
+			if want := "  Type: " + tt.want + "\n"; !strings.Contains(out.String(), want) {
+				t.Errorf("output does not contain %q:\n%s", want, out.String())
+			}
+		})
+	}
+}
+
 func TestCheckCertificateMissingFile(t *testing.T) {
 	var out bytes.Buffer
 	checkCertificate(&out, filepath.Join(t.TempDir(), "missing-cert.pub"))
@@ -257,22 +314,39 @@ func TestCheckCertificateMissingFile(t *testing.T) {
 	}
 }
 
-func TestCheckCertificateExpiration(t *testing.T) {
+func TestCheckCertificateValidity(t *testing.T) {
+	const (
+		valid       = "  ✓ Certificate is currently valid\n"
+		expired     = "  ⚠️  WARNING: Certificate has EXPIRED!\n"
+		notYetValid = "  ⚠️  WARNING: Certificate is not yet valid!\n"
+	)
+	now := time.Unix(1_800_000_000, 0)
+	unixNow := uint64(now.Unix())
+
 	tests := []struct {
-		name    string
-		validTo time.Time
-		want    string
+		name        string
+		validAfter  uint64
+		validBefore uint64
+		want        string
 	}{
-		{name: "future", validTo: time.Now().Add(time.Hour), want: "  ✓ Certificate is currently valid\n"},
-		{name: "past", validTo: time.Now().Add(-time.Hour), want: "  ⚠️  WARNING: Certificate has EXPIRED!\n"},
+		{name: "within the window", validAfter: unixNow - 60, validBefore: unixNow + 60, want: valid},
+		{name: "starts now", validAfter: unixNow, validBefore: unixNow + 60, want: valid},
+		{name: "ends now", validAfter: unixNow - 60, validBefore: unixNow, want: expired},
+		{name: "ended", validAfter: unixNow - 120, validBefore: unixNow - 60, want: expired},
+		{name: "starts later", validAfter: unixNow + 60, validBefore: unixNow + 120, want: notYetValid},
+		{name: "no bounds", validAfter: 0, validBefore: ssh.CertTimeInfinity, want: valid},
+		{name: "no expiry but starts later", validAfter: unixNow + 60, validBefore: ssh.CertTimeInfinity, want: notYetValid},
+		{name: "expiry past the int64 range", validAfter: 0, validBefore: ssh.CertTimeInfinity - 1, want: valid},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			cert := &ssh.Certificate{ValidAfter: tt.validAfter, ValidBefore: tt.validBefore}
+
 			var out bytes.Buffer
-			checkCertificateExpiration(&out, tt.validTo)
+			checkCertificateValidity(&out, cert, now)
 			if got := out.String(); got != tt.want {
-				t.Errorf("checkCertificateExpiration() = %q, want %q", got, tt.want)
+				t.Errorf("checkCertificateValidity() = %q, want %q", got, tt.want)
 			}
 		})
 	}
