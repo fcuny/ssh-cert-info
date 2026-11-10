@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func main() {
 	fmt.Println()
 
 	for _, certPath := range certFiles {
-		checkCertificate(certPath)
+		checkCertificate(os.Stdout, certPath)
 		fmt.Println()
 	}
 }
@@ -67,31 +68,31 @@ func findCertificateFiles(sshDir string) ([]string, error) {
 	return certFiles, nil
 }
 
-func checkCertificate(certPath string) {
-	fmt.Printf("Certificate: %s\n", certPath)
+func checkCertificate(w io.Writer, certPath string) {
+	fmt.Fprintf(w, "Certificate: %s\n", certPath)
 
 	certData, err := os.ReadFile(certPath)
 	if err != nil {
-		fmt.Printf("  Error: Failed to read certificate file: %v\n", err)
+		fmt.Fprintf(w, "  Error: Failed to read certificate file: %v\n", err)
 		return
 	}
 
 	pubKey, _, _, _, err := ssh.ParseAuthorizedKey(certData)
 	if err != nil {
-		fmt.Printf("  Error: Failed to parse certificate: %v\n", err)
+		fmt.Fprintf(w, "  Error: Failed to parse certificate: %v\n", err)
 		return
 	}
 
 	cert, ok := pubKey.(*ssh.Certificate)
 	if !ok {
-		fmt.Printf("  Error: Not an SSH certificate\n")
+		fmt.Fprintf(w, "  Error: Not an SSH certificate\n")
 		return
 	}
 
-	displayCertificateInfo(cert)
+	displayCertificateInfo(w, cert)
 }
 
-func displayCertificateInfo(cert *ssh.Certificate) {
+func displayCertificateInfo(w io.Writer, cert *ssh.Certificate) {
 	certType := "Unknown"
 	switch cert.CertType {
 	case ssh.UserCert:
@@ -99,64 +100,64 @@ func displayCertificateInfo(cert *ssh.Certificate) {
 	case ssh.HostCert:
 		certType = "ssh-ed25519-cert-v01@openssh.com host certificate"
 	}
-	fmt.Printf("  Type: %s\n", certType)
+	fmt.Fprintf(w, "  Type: %s\n", certType)
 
-	fmt.Printf("  Public key: %s %s\n", cert.Key.Type(), cert.KeyId)
+	fmt.Fprintf(w, "  Public key: %s %s\n", cert.Key.Type(), cert.KeyId)
 
-	fmt.Printf("  Signing CA: %s\n", cert.SignatureKey.Type())
+	fmt.Fprintf(w, "  Signing CA: %s\n", cert.SignatureKey.Type())
 
-	fmt.Printf("  Key ID: %s\n", cert.KeyId)
+	fmt.Fprintf(w, "  Key ID: %s\n", cert.KeyId)
 
-	fmt.Printf("  Serial: %d\n", cert.Serial)
+	fmt.Fprintf(w, "  Serial: %d\n", cert.Serial)
 
 	validFrom := time.Unix(int64(cert.ValidAfter), 0)
 	validTo := time.Unix(int64(cert.ValidBefore), 0)
 
-	fmt.Printf("  Valid from: %s\n", validFrom.Format("2006-01-02T15:04:05"))
+	fmt.Fprintf(w, "  Valid from: %s\n", validFrom.Format("2006-01-02T15:04:05"))
 
 	if cert.ValidBefore == ssh.CertTimeInfinity {
-		fmt.Printf("  Valid to: forever\n")
-		fmt.Println("  ✓ Certificate is currently valid")
+		fmt.Fprintf(w, "  Valid to: forever\n")
+		fmt.Fprintln(w, "  ✓ Certificate is currently valid")
 	} else {
-		fmt.Printf("  Valid to: %s\n", validTo.Format("2006-01-02T15:04:05"))
-		checkCertificateExpiration(validTo)
+		fmt.Fprintf(w, "  Valid to: %s\n", validTo.Format("2006-01-02T15:04:05"))
+		checkCertificateExpiration(w, validTo)
 	}
 
 	if len(cert.ValidPrincipals) > 0 {
-		fmt.Println("  Principals:")
+		fmt.Fprintln(w, "  Principals:")
 		for _, principal := range cert.ValidPrincipals {
-			fmt.Printf("    %s\n", principal)
+			fmt.Fprintf(w, "    %s\n", principal)
 		}
 	}
 
 	if len(cert.CriticalOptions) > 0 {
-		fmt.Println("  Critical Options:")
+		fmt.Fprintln(w, "  Critical Options:")
 		for key, value := range cert.CriticalOptions {
 			if value == "" {
-				fmt.Printf("    %s\n", key)
+				fmt.Fprintf(w, "    %s\n", key)
 			} else {
-				fmt.Printf("    %s %s\n", key, value)
+				fmt.Fprintf(w, "    %s %s\n", key, value)
 			}
 		}
 	}
 
 	if len(cert.Extensions) > 0 {
-		fmt.Println("  Extensions:")
+		fmt.Fprintln(w, "  Extensions:")
 		for key, value := range cert.Extensions {
 			if value == "" {
-				fmt.Printf("    %s\n", key)
+				fmt.Fprintf(w, "    %s\n", key)
 			} else {
-				fmt.Printf("    %s %s\n", key, value)
+				fmt.Fprintf(w, "    %s %s\n", key, value)
 			}
 		}
 	}
 }
 
-func checkCertificateExpiration(validTo time.Time) {
+func checkCertificateExpiration(w io.Writer, validTo time.Time) {
 	now := time.Now()
 	if validTo.Before(now) {
-		fmt.Println("  ⚠️  WARNING: Certificate has EXPIRED!")
+		fmt.Fprintln(w, "  ⚠️  WARNING: Certificate has EXPIRED!")
 	} else {
-		fmt.Println("  ✓ Certificate is currently valid")
+		fmt.Fprintln(w, "  ✓ Certificate is currently valid")
 	}
 }
